@@ -261,7 +261,6 @@
   "src/commands/html-to-markdown/html-to-markdown.utf8-stdin.test.ts > html-to-markdown reads UTF-8 from stdin preserves multibyte text in piped HTML",
   "src/commands/tar/tar.binary.test.ts > tar with binary data binary stdin piping should preserve xz compression by default",
   "src/commands/tar/tar.binary.test.ts > tar with binary data binary stdin piping should preserve zstd compression by default",
-  "src/commands/tar/tar.bundle.test.ts > tar bundled binary should preserve xz codec behavior by default",
   "src/commands/tar/tar.test.ts > tar auto-compress (-a) should auto-detect xz from .tar.xz extension",
   "src/commands/tar/tar.test.ts > tar auto-compress (-a) should auto-detect zstd from .tar.zst extension",
   "src/commands/tar/tar.test.ts > tar xz compression (-J) should preserve xz compression by default",

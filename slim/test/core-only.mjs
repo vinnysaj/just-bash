@@ -4,6 +4,8 @@
 // an add-on are expected to fail; they are listed in
 // core-only-addon-tests.json. The run fails when any other test fails, or
 // when a listed test passes, so the list stays exact across upstream merges.
+// The list is for Linux, where CI runs: on macOS without liblzma, upstream's
+// own xz tests fail too.
 //
 //   node test/core-only.mjs           check
 //   node test/core-only.mjs --update  rewrite the list from this run
@@ -51,6 +53,8 @@ const testResults = SUITES.flatMap(runSuite);
 const failed = [];
 /** Load errors by list entry. They name absolute paths, so the entries leave them out. */
 const loadErrors = new Map();
+/** Tests this environment skips, such as those that need module.registerHooks. */
+const skipped = new Set();
 for (const file of testResults) {
   const path = relative(UPSTREAM_DIR, file.name);
   if (file.assertionResults.length === 0 && file.status === "failed") {
@@ -59,7 +63,9 @@ for (const file of testResults) {
     loadErrors.set(entry, file.message);
   }
   for (const test of file.assertionResults) {
-    if (test.status === "failed") failed.push(`${path} > ${test.fullName}`);
+    const entry = `${path} > ${test.fullName}`;
+    if (test.status === "failed") failed.push(entry);
+    else if (test.status !== "passed") skipped.add(entry);
   }
 }
 failed.sort();
@@ -75,7 +81,9 @@ if (update) {
 const expected = new Set(JSON.parse(readFileSync(LIST, "utf8")));
 const unexpected = failed.filter((test) => !expected.has(test));
 const failedSet = new Set(failed);
-const stale = [...expected].filter((test) => !failedSet.has(test));
+const stale = [...expected].filter(
+  (test) => !failedSet.has(test) && !skipped.has(test),
+);
 
 if (unexpected.length > 0) {
   console.error(
