@@ -30,10 +30,12 @@ export const VERSION = slimManifest.version;
 
 /**
  * Range of a library an add-on ships. slim/package.json lists everything the
- * packages ship as dependencies and the build tooling as devDependencies.
+ * packages ship as dependencies (the native codecs as optionalDependencies,
+ * as upstream lists them) and the build tooling as devDependencies.
  */
 function dependencyRange(name) {
-  const range = slimManifest.dependencies[name];
+  const range =
+    slimManifest.dependencies[name] ?? slimManifest.optionalDependencies[name];
   if (!range) throw new Error(`slim/package.json is missing ${name}`);
   return range;
 }

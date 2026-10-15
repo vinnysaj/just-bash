@@ -1,8 +1,9 @@
 name: Slim CI
 
-# Gates the @vinnysaj/just-bash packages: upstream's suite against core plus
-# every add-on and against core alone, the differential test against the
-# published upstream release, the app smoke test, and the size report.
+# Gates the @vinnysaj/just-bash packages: the suites upstream's CI runs (unit,
+# WASM, comparison) against core plus every add-on and against core alone,
+# the differential test against the published upstream release, the app
+# smoke test, and the size report.
 
 on:
   push:
@@ -56,13 +57,16 @@ jobs:
       - name: Build slim packages
         run: pnpm --filter just-bash-slim build
 
-      - name: Upstream suite, core and every add-on
+      - name: Upstream unit suite, core and every add-on
         run: pnpm --filter just-bash-slim test:full
 
       - name: Upstream WASM suite, core and every add-on
         run: pnpm --filter just-bash-slim test:full:wasm
 
-      - name: Upstream suite, core only
+      - name: Upstream comparison suite, core and every add-on
+        run: pnpm --filter just-bash-slim test:full:comparison
+
+      - name: Upstream unit and comparison suites, core only
         run: pnpm --filter just-bash-slim test:core
 
       - name: Differential test against upstream

@@ -1,5 +1,7 @@
-// Runs upstream's test suite against the slim core with no add-ons installed.
-// Tests that need an add-on are expected to fail; they are listed in
+// Runs upstream's unit and comparison suites, the ones upstream's CI runs,
+// against the slim core with no add-ons installed. Its WASM suite is left
+// out: python3, sqlite3, and js-exec need add-ons throughout. Tests that need
+// an add-on are expected to fail; they are listed in
 // core-only-addon-tests.json. The run fails when any other test fails, or
 // when a listed test passes, so the list stays exact across upstream merges.
 //
@@ -13,51 +15,48 @@ import { join, relative } from "node:path";
 import { SLIM_DIR, UPSTREAM_DIR } from "../config.mjs";
 
 const LIST = join(SLIM_DIR, "test/core-only-addon-tests.json");
+const SUITES = ["core.config.ts", "core-comparison.config.ts"];
 const update = process.argv.includes("--update");
 
-const reportDir = mkdtempSync(join(tmpdir(), "slim-core-only-"));
-const report = join(reportDir, "report.json");
-const run = spawnSync(
-  join(SLIM_DIR, "node_modules/.bin/vitest"),
-  [
-    "run",
-    "--config",
-    join(SLIM_DIR, "test/core.config.ts"),
-    // Upstream's test:run set; python3, sqlite3, and js-exec need add-ons throughout.
-    "--exclude",
-    "src/security/fuzzing/",
-    "--exclude",
-    "src/commands/python3/",
-    "--exclude",
-    "src/commands/sqlite3/",
-    "--exclude",
-    "src/commands/js-exec/",
-    "--exclude",
-    "src/agent-examples/python-scripting.test.ts",
-    "--reporter=dot",
-    "--reporter=json",
-    `--outputFile.json=${report}`,
-  ],
-  { cwd: UPSTREAM_DIR, stdio: "inherit" },
-);
-
-let results;
-try {
-  results = JSON.parse(readFileSync(report, "utf8"));
-} catch (error) {
-  console.error(
-    `vitest wrote no report (exit ${run.status}): ${error.message}`,
+/** Runs one vitest config and returns its JSON report's test results. */
+function runSuite(config) {
+  const reportDir = mkdtempSync(join(tmpdir(), "slim-core-only-"));
+  const report = join(reportDir, "report.json");
+  const run = spawnSync(
+    join(SLIM_DIR, "node_modules/.bin/vitest"),
+    [
+      "run",
+      "--config",
+      join(SLIM_DIR, "test", config),
+      "--reporter=dot",
+      "--reporter=json",
+      `--outputFile.json=${report}`,
+    ],
+    { cwd: UPSTREAM_DIR, stdio: "inherit" },
   );
-  process.exit(1);
-} finally {
-  rmSync(reportDir, { recursive: true, force: true });
+  try {
+    return JSON.parse(readFileSync(report, "utf8")).testResults;
+  } catch (error) {
+    console.error(
+      `vitest wrote no report for ${config} (exit ${run.status}): ${error.message}`,
+    );
+    process.exit(1);
+  } finally {
+    rmSync(reportDir, { recursive: true, force: true });
+  }
 }
 
+const testResults = SUITES.flatMap(runSuite);
+
 const failed = [];
-for (const file of results.testResults) {
+/** Load errors by list entry. They name absolute paths, so the entries leave them out. */
+const loadErrors = new Map();
+for (const file of testResults) {
   const path = relative(UPSTREAM_DIR, file.name);
   if (file.assertionResults.length === 0 && file.status === "failed") {
-    failed.push(`${path} (file failed to load: ${file.message})`);
+    const entry = `${path} (file failed to load)`;
+    failed.push(entry);
+    loadErrors.set(entry, file.message);
   }
   for (const test of file.assertionResults) {
     if (test.status === "failed") failed.push(`${path} > ${test.fullName}`);
@@ -82,7 +81,10 @@ if (unexpected.length > 0) {
   console.error(
     `\n${unexpected.length} tests failed without needing an add-on:`,
   );
-  for (const test of unexpected) console.error(`  ${test}`);
+  for (const test of unexpected) {
+    console.error(`  ${test}`);
+    if (loadErrors.has(test)) console.error(`    ${loadErrors.get(test)}`);
+  }
 }
 if (stale.length > 0) {
   console.error(

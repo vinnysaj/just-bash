@@ -77,11 +77,6 @@ export function slimConfig(mode: SlimMode): ViteUserConfig {
       __SLIM_ADDON_BASE__: JSON.stringify(pathToFileURL(addonBase).href),
     },
     test: {
-      // Upstream shares module state and globals across the files a worker
-      // runs. Without add-ons, the add-on tests fail partway, past their
-      // cleanup, and what they leave behind (an active defense-in-depth box,
-      // patched globals) would fail later files that need no add-on.
-      ...(mode === "core" && { isolate: true }),
       server: {
         deps: {
           // guarded-fetch must go through vite so the DNS tests' vi.mock of
