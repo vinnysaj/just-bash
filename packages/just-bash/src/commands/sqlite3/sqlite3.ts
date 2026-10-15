@@ -16,6 +16,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import initSqlJs from "sql.js";
+import { addonWorkerPath } from "../../addons.js";
 import { decodeBytesToUtf8 } from "../../encoding.js";
 import type { ResourceLease } from "../../execution-scope.js";
 import {
@@ -530,7 +531,7 @@ async function executeInWorker(
 ): Promise<WorkerOutput> {
   // Try to use worker thread for timeout protection
   try {
-    const workerPath = findWorkerPath();
+    const workerPath = addonWorkerPath("sqlite3") ?? findWorkerPath();
 
     return await new Promise((resolve) => {
       let worker: Worker | undefined;

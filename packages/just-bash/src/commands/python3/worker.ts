@@ -36,6 +36,8 @@ export interface WorkerInput {
   timeoutMs?: number;
   /** Maximum size of one HOSTFS file, enforced before guest allocations. */
   maxFileSize?: number;
+  /** CPython compiled by the parent, so this worker skips compiling python.wasm. */
+  wasmModule?: WebAssembly.Module;
 }
 
 export interface WorkerOutput {
@@ -1287,6 +1289,39 @@ function postWorkerMessage(protocolToken: string, message: unknown): void {
   }
 }
 
+/**
+ * Creates the CPython module from a precompiled WebAssembly module through
+ * Emscripten's instantiateWasm hook. The hook has no way to report failure,
+ * so a failed instantiation rejects here instead of leaving the load pending.
+ */
+function instantiatePythonModule(
+  createPythonModule: (
+    config: Record<string, unknown>,
+  ) => Promise<EmscriptenModule>,
+  wasmModule: WebAssembly.Module,
+  config: Record<string, unknown>,
+): Promise<EmscriptenModule> {
+  return new Promise((resolve, reject) => {
+    createPythonModule({
+      ...config,
+      instantiateWasm: (
+        imports: WebAssembly.Imports,
+        receiveInstance: (
+          instance: WebAssembly.Instance,
+          module: WebAssembly.Module,
+        ) => void,
+      ) => {
+        WebAssembly.instantiate(wasmModule, imports).then(
+          (instance) => receiveInstance(instance, wasmModule),
+          reject,
+        );
+        // Emscripten fills in the exports once receiveInstance is called.
+        return Object.create(null);
+      },
+    }).then(resolve, reject);
+  });
+}
+
 async function runPython(input: WorkerInput): Promise<WorkerOutput> {
   if (!moduleLoadGuardInstalled) {
     return {
@@ -1364,7 +1399,7 @@ async function runPython(input: WorkerInput): Promise<WorkerOutput> {
       },
     );
 
-    Module = await createPythonModule({
+    const config = {
       // Emscripten otherwise uses the host worker filename as argv[0]. Long
       // installation paths can make CPython abort during script finalization.
       // Keep the interpreter identity inside the virtual filesystem instead.
@@ -1373,7 +1408,10 @@ async function runPython(input: WorkerInput): Promise<WorkerOutput> {
       preRun: [onPreRun],
       print: onPrint,
       printErr: onPrintErr,
-    });
+    };
+    Module = await (input.wasmModule
+      ? instantiatePythonModule(createPythonModule, input.wasmModule, config)
+      : createPythonModule(config));
   } catch (e) {
     const message = sanitizeHostErrorMessage((e as Error).message);
     return {

@@ -2,6 +2,7 @@
 // Each command has an explicit loader function for bundler compatibility (Next.js, etc.)
 
 import { raceCancellation } from "../abort-signals.js";
+import { missingAddonForCommand, requireAddon } from "../addons.js";
 import { DefenseInDepthBox } from "../security/defense-in-depth-box.js";
 import type {
   ExecResult,
@@ -561,6 +562,14 @@ function createLazyCommand(def: LazyCommandDef): RuntimeCommand {
       let cmd = cache.get(def.name);
 
       if (!cmd) {
+        const missingAddon = missingAddonForCommand(def.name);
+        if (missingAddon) {
+          return {
+            stdout: "",
+            stderr: `${def.name}: requires ${missingAddon}\n`,
+            exitCode: 127,
+          };
+        }
         // Lazy imports run inside the defense-in-depth context.
         // Module loading may access blocked globals (e.g., worker_threads
         // uses SharedArrayBuffer, sql.js uses WebAssembly), so we suspend
@@ -647,6 +656,7 @@ export function getPythonCommandNames(): string[] {
  * Note: Python introduces additional security surface (arbitrary code execution).
  */
 export function createPythonCommands(): RuntimeCommand[] {
+  requireAddon("python");
   return pythonCommandLoaders.map(createLazyCommand);
 }
 
@@ -662,6 +672,7 @@ export function getJavaScriptCommandNames(): string[] {
  * These are only registered when javascript is explicitly enabled.
  */
 export function createJavaScriptCommands(): RuntimeCommand[] {
+  requireAddon("javascript");
   return jsCommandLoaders.map(createLazyCommand);
 }
 

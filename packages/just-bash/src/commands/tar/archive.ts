@@ -16,6 +16,7 @@ import {
 } from "modern-tar";
 // @ts-expect-error - seek-bzip doesn't have types
 import seekBzip from "seek-bzip";
+import { codecUnavailableMessage } from "../../addons.js";
 import { utf8ByteLength } from "../../encoding.js";
 import type {
   CommandExecutionBudget,
@@ -40,10 +41,7 @@ async function getLzma(): Promise<typeof import("node-liblzma")> {
     );
     return lzma;
   } catch {
-    lzmaLoadError = new Error(
-      "xz compression requires node-liblzma which failed to load. " +
-        "Install liblzma-dev (apt) or xz (brew) and reinstall dependencies.",
-    );
+    lzmaLoadError = new Error(codecUnavailableMessage("xz"));
     throw lzmaLoadError;
   }
 }
@@ -61,10 +59,7 @@ async function getZstd(): Promise<typeof import("@mongodb-js/zstd")> {
     );
     return zstd;
   } catch {
-    zstdLoadError = new Error(
-      "zstd compression requires @mongodb-js/zstd which is not installed. " +
-        "Install it with: npm install @mongodb-js/zstd",
-    );
+    zstdLoadError = new Error(codecUnavailableMessage("zstd"));
     throw zstdLoadError;
   }
 }

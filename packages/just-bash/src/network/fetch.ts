@@ -7,6 +7,7 @@
 
 import type { GuardedFetchOptions } from "guarded-fetch";
 import { combineAbortSignals } from "../abort-signals.js";
+import { requireAddon } from "../addons.js";
 import { DefenseInDepthBox } from "../security/defense-in-depth-box.js";
 import { _clearTimeout, _setTimeout } from "../timers.js";
 import {
@@ -99,6 +100,7 @@ export type SecureFetch = (
  * Creates a secure fetch function that enforces the allow-list.
  */
 export function createSecureFetch(config: NetworkConfig): SecureFetch {
+  requireAddon("network");
   const entries: AllowedUrlEntry[] = config.allowedUrlPrefixes ?? [];
 
   // guarded-fetch resolves and pins internally with no seam for these, so

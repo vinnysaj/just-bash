@@ -12,6 +12,7 @@
 
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { addonWorkerPath, sharedCpythonModule } from "../../addons.js";
 import { decodeBytesToUtf8, latin1FromBytes } from "../../encoding.js";
 import type { IFileSystem } from "../../fs/interface.js";
 import {
@@ -194,7 +195,9 @@ export function _resetExecutionQueue(): void {
   executionQueues = new WeakMap();
 }
 
-const workerPath = fileURLToPath(new URL("./worker.js", import.meta.url));
+const workerPath =
+  addonWorkerPath("python3") ??
+  fileURLToPath(new URL("./worker.js", import.meta.url));
 
 function normalizeWorkerMessage(
   msg: unknown,
@@ -498,6 +501,17 @@ async function executePython(
     };
   }
 
+  let wasmModule: WebAssembly.Module | null;
+  try {
+    wasmModule = await sharedCpythonModule();
+  } catch (error) {
+    return {
+      stdout: "",
+      stderr: `python3: Failed to load CPython: ${sanitizeHostErrorMessage(getErrorMessage(error))}\n`,
+      exitCode: 1,
+    };
+  }
+
   const controller = new WorkerRequestController({
     commandName: "python3",
     timeoutMs,
@@ -518,10 +532,11 @@ async function executePython(
     scriptPath,
     timeoutMs,
     maxFileSize: ctx.limits.maxStringLength,
+    ...(wasmModule && { wasmModule }),
   };
 
   controller.assertMessageSize(
-    { ...workerInput, sharedBuffer: undefined },
+    { ...workerInput, sharedBuffer: undefined, wasmModule: undefined },
     "request",
   );
 
