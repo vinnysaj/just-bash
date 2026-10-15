@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - examples/*
+  - slim
 
 # Packages whose install scripts we allow to run. pnpm 10 blocks install
 # scripts by default; this is the explicit allowlist for build-time native
