@@ -1,0 +1,135 @@
+name: Slim upstream sync
+
+# Weekly: merges a new just-bash release into sync/just-bash@<version> and
+# opens a pull request with upstream's changelog and the size report, and
+# audits the dependencies the packages ship. A week with no upstream release
+# does nothing.
+#
+# Pushing a merge that touches upstream's workflow files needs a token with
+# the workflows permission, which GITHUB_TOKEN cannot have. SYNC_TOKEN is a
+# fine-grained token for this repository with Contents, Pull requests,
+# Issues, and Workflows set to read and write. Pull requests opened with it
+# also trigger Slim CI, which GITHUB_TOKEN's would not.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require SYNC_TOKEN
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Add the SYNC_TOKEN secret described at the top of slim-sync.yml"
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: slim
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install XZ build dependency
+        run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
+
+      - name: Merge the newest upstream release
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node slim/scripts/sync-upstream.mjs --notes "$RUNNER_TEMP/upstream-notes.md"
+
+      - name: Install dependencies
+        if: steps.merge.outputs.updated == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build slim packages
+        if: steps.merge.outputs.updated == 'true'
+        run: pnpm --filter just-bash-slim build
+
+      - name: Size report
+        if: steps.merge.outputs.updated == 'true'
+        run: pnpm --filter just-bash-slim size > "$RUNNER_TEMP/size.md"
+
+      - name: Push the branch and open a pull request
+        if: steps.merge.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          VERSION: ${{ steps.merge.outputs.version }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # The build reads the upstream base from the merged tag.
+          git push "$remote" "refs/tags/just-bash@${VERSION}" "HEAD:refs/heads/${BRANCH}"
+          {
+            echo "Merges [just-bash@${VERSION}](https://github.com/vercel-labs/just-bash/releases/tag/just-bash%40${VERSION}) from upstream."
+            echo
+            echo "Slim CI runs upstream's suite against core with every add-on and against core alone, the differential test against just-bash@${VERSION} from npm, and the app smoke test."
+            echo
+            echo "## Installed size"
+            echo
+            cat "$RUNNER_TEMP/size.md"
+            echo
+            echo "## Releasing"
+            echo
+            echo "Add a CHANGELOG entry in slim/CHANGELOG.md, run \`node slim/scripts/set-version.mjs <version>\`, merge, then push the tag \`v<version>\`."
+            echo
+            echo "## Upstream changelog"
+            echo
+            cat "$RUNNER_TEMP/upstream-notes.md"
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base slim --head "$BRANCH" \
+            --title "chore: sync just-bash@${VERSION}" \
+            --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Report merge conflicts
+        if: failure() && steps.merge.outputs.conflicts != ''
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          gh issue create \
+            --title "Upstream sync needs a manual merge" \
+            --body "The newest just-bash release conflicts with the fork in: ${CONFLICTS}. Run \`node slim/scripts/sync-upstream.mjs\` locally, resolve the conflicts, and open the pull request by hand. Run log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: slim
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      # Production dependencies are exactly what the packages bundle or
+      # depend on: upstream's runtime dependencies and slim/package.json's.
+      - name: Audit shipped dependencies
+        run: pnpm audit --prod --audit-level moderate

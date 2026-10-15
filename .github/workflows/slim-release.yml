@@ -1,0 +1,58 @@
+name: Slim release
+
+# Publishes every @vinnysaj/just-bash package when a v<version> tag is pushed,
+# after Slim CI passes on the tagged commit.
+#
+# npm trusted publishing binds to this workflow's filename (slim-release.yml).
+# It cannot publish a package's first version, so the first release uses the
+# NPM_TOKEN secret; after it, configure a trusted publisher for each package
+# and delete the secret, and npm authenticates with OIDC alone.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/slim-ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      # Node 24 ships npm >= 11.5.1, which authenticates with OIDC.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install XZ build dependency
+        run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build slim packages
+        run: pnpm --filter just-bash-slim build
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: node slim/scripts/publish.mjs "$TAG"
