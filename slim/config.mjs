@@ -1,7 +1,6 @@
 // Package definitions and module aliases shared by the build, the test
 // configs, and the release scripts.
 
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,25 +104,41 @@ export const ADDON_ALIASES = Object.fromEntries(
 export const UPSTREAM_ADDONS_MODULE = join(UPSTREAM_SRC, "addons.ts");
 export const SLIM_ADDONS_MODULE = join(SLIM_DIR, "core/addons.ts");
 
-/** The upstream release this tree is based on: the newest merged just-bash tag. */
+/** Records the upstream release merged into this tree; written by scripts/sync-upstream.mjs. */
+export const UPSTREAM_FILE = join(SLIM_DIR, "upstream.json");
+
+/** The upstream release this tree is based on. */
 export function upstreamBase() {
-  const tag = execFileSync(
-    "git",
-    ["describe", "--tags", "--abbrev=0", "--match", "just-bash@*", "HEAD"],
-    { cwd: REPO_DIR, encoding: "utf8" },
-  ).trim();
-  const commit = execFileSync("git", ["rev-list", "-n", "1", tag], {
-    cwd: REPO_DIR,
-    encoding: "utf8",
-  }).trim();
+  const base = JSON.parse(readFileSync(UPSTREAM_FILE, "utf8"));
   const upstreamManifest = JSON.parse(
     readFileSync(join(UPSTREAM_DIR, "package.json"), "utf8"),
   );
-  const version = tag.slice("just-bash@".length);
-  if (upstreamManifest.version !== version) {
+  if (upstreamManifest.version !== base.version) {
     throw new Error(
-      `packages/just-bash/package.json is ${upstreamManifest.version} but the newest merged tag is ${tag}`,
+      `packages/just-bash/package.json is ${upstreamManifest.version} but slim/upstream.json records just-bash@${base.version}`,
     );
   }
-  return { package: "just-bash", version, commit };
+  return base;
+}
+
+/**
+ * The npm dist-tag a version publishes under. A release has the version of
+ * the upstream release it is built from (latest); its pre-releases are
+ * <version>-rc.N (next); a fork-only fix between upstream releases is
+ * <upstream patch + 1>-slim.N (latest), which sorts after the upstream
+ * version and before upstream's next patch.
+ */
+export function distTag(version, upstreamVersion) {
+  const [major, minor, patch] = upstreamVersion.split(".").map(Number);
+  const nextPatch = `${major}.${minor}.${patch + 1}`;
+  const dash = version.indexOf("-");
+  const release = dash === -1 ? version : version.slice(0, dash);
+  const prerelease = dash === -1 ? null : version.slice(dash + 1);
+  if (version === upstreamVersion) return "latest";
+  if (release === upstreamVersion && /^rc\.\d+$/.test(prerelease))
+    return "next";
+  if (release === nextPatch && /^slim\.\d+$/.test(prerelease)) return "latest";
+  throw new Error(
+    `Version ${version} must be ${upstreamVersion} (the upstream release), ${upstreamVersion}-rc.N, or ${nextPatch}-slim.N`,
+  );
 }

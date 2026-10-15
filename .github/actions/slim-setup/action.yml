@@ -1,0 +1,51 @@
+name: Slim setup
+description: >-
+  After actions/checkout: pulls the Git LFS files through the Actions cache,
+  then sets up Node.js and pnpm and installs the workspace dependencies.
+
+inputs:
+  node-version:
+    description: Node.js version.
+    default: "24"
+  registry-url:
+    description: npm registry to write an .npmrc for, when publishing.
+    default: ""
+  dependency-cache:
+    description: Package manager whose store to cache ("pnpm"), or "" for none.
+    default: "pnpm"
+
+runs:
+  using: composite
+  steps:
+    # CPython's files are Git LFS objects. Caching them keeps CI from
+    # spending the repository's LFS bandwidth on every job.
+    - name: Key the Git LFS cache
+      id: lfs
+      shell: bash
+      run: echo "key=lfs-$(git lfs ls-files --long | sha256sum | cut -c1-32)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .git/lfs
+        key: ${{ steps.lfs.outputs.key }}
+
+    - name: Pull Git LFS files
+      shell: bash
+      run: git lfs pull
+
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ inputs.dependency-cache }}
+        registry-url: ${{ inputs.registry-url }}
+
+    # node-liblzma compiles during install.
+    - name: Install XZ build dependency
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

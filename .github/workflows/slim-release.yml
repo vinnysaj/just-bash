@@ -1,58 +1,310 @@
 name: Slim release
 
-# Publishes every @vinnysaj/just-bash package when a v<version> tag is pushed,
-# after Slim CI passes on the tagged commit.
+# Keeps the @vinnysaj/just-bash packages in step with just-bash, hands-off.
 #
-# npm trusted publishing binds to this workflow's filename (slim-release.yml).
-# It cannot publish a package's first version, so the first release uses the
-# NPM_TOKEN secret; after it, configure a trusted publisher for each package
-# and delete the secret, and npm authenticates with OIDC alone.
+# Daily, once a new just-bash release has been on npm for MIN_AGE_DAYS, this
+# merges it into slim (slim/scripts/sync-upstream.mjs), runs Slim CI on the
+# merge, and publishes every package with the upstream version. Releases are
+# taken one at a time, oldest first. On a push to slim, or when run by hand,
+# it publishes slim's version if npm does not have it yet: that is how a fix
+# for a failed sync, or a fork-only fix (slim/scripts/set-version.mjs), ships.
+#
+# Anything that needs a person (a merge conflict, a failing test, a package
+# that grew, a failed publish) fails the run and opens or comments on the
+# issue labeled ISSUE_LABEL; GitHub emails both. Scheduled runs wait while
+# that issue is open, and the next successful release closes it.
+#
+# npm authenticates each publish through trusted publishing (OIDC), bound to
+# this file's name, and adds provenance. A package's first version cannot use
+# trusted publishing, so the first release is a bootstrap: with the NPM_TOKEN
+# secret set, run this workflow with `bootstrap`, which publishes
+# <version>-rc.0 under the `next` tag. Then add a trusted publisher for each
+# package (repository vinnysaj/just-bash, workflow slim-release.yml), delete
+# NPM_TOKEN, and run it again to publish <version>.
 
 on:
+  schedule:
+    - cron: "17 6 * * *"
   push:
-    tags: ["v*"]
+    branches: [slim]
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: "First release only: publish <version>-rc.0 with the NPM_TOKEN secret"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Do everything except pushing, publishing, and opening issues"
+        type: boolean
+        default: false
+      allow_size_growth:
+        description: "Publish even though a package grew past the size check"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-jobs:
-  ci:
-    uses: ./.github/workflows/slim-ci.yml
+concurrency:
+  group: slim-release
+  cancel-in-progress: false
 
-  publish:
-    needs: ci
-    runs-on: ubuntu-24.04
+env:
+  MIN_AGE_DAYS: "3"
+  ISSUE_LABEL: slim-release
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/slim'
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      issues: read
+      # Re-enabling the scheduled workflows keeps GitHub from disabling them
+      # after 60 days without activity in the repository.
+      actions: write
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Keep the schedules enabled
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/slim-release.yml/enable"
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/slim-audit.yml/enable"
+
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP: ${{ inputs.bootstrap || false }}
+        run: |
+          open=$(gh api "repos/${GITHUB_REPOSITORY}/issues?labels=${ISSUE_LABEL}&state=open" --jq length)
+          BLOCKED=$([ "$open" -gt 0 ] && echo true || echo false) node slim/scripts/release-plan.mjs
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  merge:
+    needs: plan
+    if: needs.plan.outputs.action == 'sync'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+      conflicts: ${{ steps.merge.outputs.conflicts }}
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
-          lfs: true
           persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      # Node 24 ships npm >= 11.5.1, which authenticates with OIDC.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
-          cache: "pnpm"
+
+      - name: Merge the upstream release
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "sync/${TAG}"
+          node slim/scripts/sync-upstream.mjs "$TAG"
+
+      # Pushing uploads the LFS objects the fork does not have yet, such as a
+      # new CPython build, from upstream's LFS storage.
+      - name: Push the merge to sync/${{ needs.plan.outputs.tag }}
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git lfs install --local
+          git remote add upstream https://github.com/vercel-labs/just-bash.git
+          git lfs fetch upstream HEAD
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/sync/${TAG}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: [plan, merge]
+    if: >-
+      !cancelled() && needs.plan.result == 'success' &&
+      (needs.plan.outputs.action == 'release' ||
+       needs.plan.outputs.action == 'bootstrap' ||
+       needs.merge.result == 'success')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/slim-ci.yml
+    with:
+      ref: ${{ needs.merge.outputs.sha || needs.plan.outputs.sha }}
+
+  publish:
+    needs: [plan, merge, ci]
+    if: ${{ !cancelled() && needs.ci.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Fast-forwards slim and pushes the release tag.
+      contents: write
+      # npm trusted publishing and provenance.
+      id-token: write
+      # Closes the release issue.
+      issues: write
+    env:
+      ACTION: ${{ needs.plan.outputs.action }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.merge.outputs.sha || needs.plan.outputs.sha }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.merge.outputs.sha || needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      # No dependency cache for a release build.
+      - uses: ./.github/actions/slim-setup
+        with:
           registry-url: "https://registry.npmjs.org"
+          dependency-cache: ""
 
-      - name: Install XZ build dependency
-        run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set the pre-release version
+        if: env.ACTION == 'bootstrap'
+        working-directory: slim
+        run: npm pkg set "version=${VERSION}"
 
       - name: Build slim packages
         run: pnpm --filter just-bash-slim build
 
-      - name: Publish
+      - name: Check package sizes against npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: node slim/scripts/publish.mjs "$TAG"
+          ALLOW_GROWTH: ${{ inputs.allow_size_growth || false }}
+        run: |
+          if [ "$ALLOW_GROWTH" = true ]; then
+            node slim/scripts/size-check.mjs --allow-growth
+          else
+            node slim/scripts/size-check.mjs
+          fi
+
+      - name: Fast-forward slim to the merge
+        if: env.ACTION == 'sync' && env.DRY_RUN != 'true'
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${SHA}:refs/heads/slim"
+
+      - name: Publish to npm
+        env:
+          # Only the bootstrap uses a token; every other publish uses OIDC.
+          NODE_AUTH_TOKEN: ${{ needs.plan.outputs.action == 'bootstrap' && secrets.NPM_TOKEN || '' }}
+        run: |
+          if [ "$ACTION" = bootstrap ] && [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::The bootstrap needs the NPM_TOKEN secret; see the top of slim-release.yml"
+            exit 1
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            node slim/scripts/publish.mjs --dry-run
+          else
+            node slim/scripts/publish.mjs
+          fi
+
+      - name: Tag the release
+        if: env.ACTION != 'bootstrap' && env.DRY_RUN != 'true'
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git tag "v${VERSION}" "$SHA"
+          git push "$remote" "refs/tags/v${VERSION}"
+          if [ "$ACTION" = sync ]; then git push "$remote" --delete "sync/${TAG}"; fi
+
+      - name: Close the release issue
+        if: env.ACTION != 'bootstrap' && env.DRY_RUN != 'true'
+        run: |
+          for number in $(gh api "repos/${GITHUB_REPOSITORY}/issues?labels=${ISSUE_LABEL}&state=open" --jq '.[].number'); do
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+              --comment "Released ${VERSION}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          done
+
+  report:
+    needs: [plan, merge, ci, publish]
+    if: ${{ failure() && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACTION: ${{ needs.plan.outputs.action }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PLAN: ${{ needs.plan.result }}
+      MERGE: ${{ needs.merge.result }}
+      CONFLICTS: ${{ needs.merge.outputs.conflicts }}
+      CI: ${{ needs.ci.result }}
+      PUBLISH: ${{ needs.publish.result }}
+
+    steps:
+      - name: Open or update the release issue
+        run: |
+          run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "$PLAN" = failure ]; then
+            title="Slim release: planning failed"
+            what="Planning the release failed, before anything was merged or published; npm or GitHub may have been unreachable. If the next run by hand fails the same way, read the log."
+          elif [ "$MERGE" = failure ] && [ -n "$CONFLICTS" ]; then
+            title="Slim release: ${TAG} needs a manual merge"
+            what="Merging ${TAG} conflicts with the fork in: ${CONFLICTS}
+
+          On a checkout of slim:
+
+              git switch slim && git pull
+              node slim/scripts/sync-upstream.mjs ${TAG}
+              # resolve the files above, then git add them
+              node slim/scripts/sync-upstream.mjs --continue
+              git push origin slim
+
+          The push publishes ${VERSION} once Slim CI passes on it."
+          elif [ "$MERGE" = failure ]; then
+            title="Slim release: merging ${TAG} failed"
+            what="Merging ${TAG} failed without a conflict; the log says why. The steps are in slim/scripts/sync-upstream.mjs."
+          elif [ "$CI" = failure ] && [ "$ACTION" = sync ]; then
+            title="Slim release: Slim CI fails on ${TAG}"
+            what="${TAG} merged cleanly, but Slim CI fails on the merge, so ${VERSION} was not published. The merge is on the branch sync/${TAG}:
+
+              git fetch origin && git switch sync/${TAG}
+              # fix, test, and commit
+              git push origin HEAD:slim
+
+          The push publishes ${VERSION} once Slim CI passes on it."
+          elif [ "$CI" = failure ]; then
+            title="Slim release: Slim CI fails on ${VERSION}"
+            what="Slim CI fails on slim, so ${VERSION} was not published. Fix it on slim and push; the push publishes ${VERSION} once Slim CI passes."
+          else
+            title="Slim release: publishing ${VERSION} failed"
+            what="Slim CI passed, but the publish job failed: the size check, pushing slim, or npm. If a package grew and that is expected, run Slim release by hand with allow_size_growth. Rerunning is safe; versions already on npm are skipped."
+          fi
+          body="${what}
+
+          Run: ${run}"
+          gh label create "$ISSUE_LABEL" --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "Slim release needs a person" --force
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues?labels=${ISSUE_LABEL}&state=open" --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "**${title}**
+
+          ${body}"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label "$ISSUE_LABEL" --title "$title" --body "$body"
+          fi

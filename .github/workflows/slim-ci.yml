@@ -3,7 +3,8 @@ name: Slim CI
 # Gates the @vinnysaj/just-bash packages: the suites upstream's CI runs (unit,
 # WASM, comparison) against core plus every add-on and against core alone,
 # the differential test against the published upstream release, the app
-# smoke test, and the size report.
+# smoke test, and the size report. slim-release.yml runs it on each commit it
+# is about to publish.
 
 on:
   push:
@@ -13,6 +14,11 @@ on:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: Commit to test.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -21,6 +27,8 @@ jobs:
   test:
     name: ${{ matrix.os }} / Node ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -31,24 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # The build reads the upstream base from the merged just-bash tags.
-          fetch-depth: 0
-          lfs: true
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: ./.github/actions/slim-setup
         with:
           node-version: ${{ matrix.node-version }}
-          cache: "pnpm"
-
-      # node-liblzma compiles during install.
-      - name: Install XZ build dependency
-        run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       # Some upstream tests read upstream's own build output.
       - name: Build upstream package
@@ -77,21 +73,16 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "24"
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/slim-setup
 
       - name: Lint
         run: pnpm lint
@@ -102,30 +93,19 @@ jobs:
   size:
     # Convex installs on Linux arm64, with install scripts.
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # The build reads the upstream base from the merged just-bash tags.
-          fetch-depth: 0
-          lfs: true
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "24"
-          cache: "pnpm"
-
-      - name: Install XZ build dependency
-        run: sudo apt-get update && sudo apt-get install --yes liblzma-dev
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/slim-setup
 
       - name: Build slim packages
         run: pnpm --filter just-bash-slim build
 
       - name: Size report
-        run: pnpm --filter just-bash-slim size >> "$GITHUB_STEP_SUMMARY"
+        run: pnpm --filter just-bash-slim size | tee -a "$GITHUB_STEP_SUMMARY"

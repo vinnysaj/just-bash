@@ -290,15 +290,6 @@ importers:
       guarded-fetch:
         specifier: ^0.1.5
         version: 0.1.5
-      run:
-        specifier: 2.1.3
-        version: 2.1.3(typescript@5.9.3)
-      sql.js:
-        specifier: ^1.14.1
-        version: 1.14.1
-      turndown:
-        specifier: ^7.2.4
-        version: 7.2.4
     devDependencies:
       '@types/node':
         specifier: ^25.9.5

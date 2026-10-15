@@ -1,10 +1,10 @@
 # Changelog
 
-Releases of the @vinnysaj/just-bash packages. Every package in a release has the same version. For changes to the shell and its commands, see upstream's [changelog](https://github.com/vercel-labs/just-bash/blob/main/packages/just-bash/CHANGELOG.md) for the release each version is based on.
+Releases of the @vinnysaj/just-bash packages. Each release has the version of the just-bash release it is built from, and every package in it has that version. For changes to the shell and its commands, see upstream's [changelog](https://github.com/vercel-labs/just-bash/blob/main/packages/just-bash/CHANGELOG.md). Changes made here go under "## Unreleased" until the next release takes them.
 
-## 1.0.0
+## 3.6.0
 
-Based on [just-bash@3.6.0](https://github.com/vercel-labs/just-bash/releases/tag/just-bash%403.6.0).
+Based on [just-bash@3.6.0](https://github.com/vercel-labs/just-bash/releases/tag/just-bash%403.6.0); upstream's [changelog](https://github.com/vercel-labs/just-bash/blob/main/packages/just-bash/CHANGELOG.md) lists its changes.
 
 - First release: `@vinnysaj/just-bash` (core) and the `-python`, `-js`, `-sqlite`, `-net`, `-html`, `-archive`, and `-full` packages.
 - Core bundles its pure-JavaScript dependencies and has no dependencies of its own. It ships as ESM only, for Node.js `^22.13.0 || >=23.2.0`, without the browser build or the CLIs.

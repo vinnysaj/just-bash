@@ -1,6 +1,6 @@
 {
   "name": "just-bash-slim",
-  "version": "1.0.0",
+  "version": "3.6.0",
   "private": true,
   "description": "Builds, tests, and releases the @vinnysaj/just-bash packages",
   "type": "module",
@@ -10,7 +10,7 @@
     "test:full:wasm": "cd ../packages/just-bash && vitest run --config ../../slim/test/full-wasm.config.ts",
     "test:full:comparison": "cd ../packages/just-bash && vitest run --config ../../slim/test/full-comparison.config.ts",
     "test:diff": "node test/differential/differential.mjs",
-    "test:smoke": "node test/smoke/app-smoke.mjs && node test/smoke/core-only-smoke.mjs",
+    "test:smoke": "node test/smoke/app-smoke.mjs && node test/smoke/core-only-smoke.mjs && node test/smoke/drop-in-smoke.mjs",
     "test:core": "node test/core-only.mjs",
     "size": "node scripts/size-report.mjs",
     "typecheck": "tsc -p tsconfig.json"
@@ -24,10 +24,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "guarded-fetch": "^0.1.5",
-    "run": "2.1.3",
-    "sql.js": "^1.14.1",
-    "turndown": "^7.2.4"
+    "guarded-fetch": "^0.1.5"
   },
   "optionalDependencies": {
     "@mongodb-js/zstd": "^7.0.0",

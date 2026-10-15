@@ -1,0 +1,33 @@
+name: Slim audit
+
+# Weekly: audits the dependencies the packages bundle or depend on, which are
+# upstream's runtime dependencies and slim/package.json's. A finding fails the
+# run, which GitHub emails to whoever last changed the schedule below.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Audit shipped dependencies
+        run: pnpm audit --prod --audit-level moderate

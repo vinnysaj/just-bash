@@ -1,10 +1,13 @@
-// Publishes every built package with provenance. Run by slim-release.yml.
+// Publishes every built package. Run by slim-release.yml after Slim CI passes.
 //
-//   node scripts/publish.mjs v<version>
+//   node scripts/publish.mjs [--dry-run]
 //
+// The version is slim/package.json's, and its dist-tag comes from distTag():
+// a release and a fork-only fix publish as `latest`, a pre-release as `next`.
 // Add-ons go first and core and full last, so an install that picks up the
 // new core always finds the matching add-ons. A version that is already on
-// the registry is skipped, so a failed run can be rerun.
+// the registry is skipped, so a failed run can be rerun. In GitHub Actions
+// every package gets npm provenance.
 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -12,17 +15,14 @@ import {
   ADDONS,
   addonPackageName,
   CORE_NAME,
+  distTag,
   OUT_DIR,
+  upstreamBase,
   VERSION,
 } from "../config.mjs";
 
-const tag = process.argv[2];
-if (tag !== `v${VERSION}`) {
-  console.error(
-    `Tag ${tag} does not match slim/package.json version ${VERSION}`,
-  );
-  process.exit(1);
-}
+const dryRun = process.argv.includes("--dry-run");
+const tag = distTag(VERSION, upstreamBase().version);
 
 const names = [
   ...ADDONS.map((addon) => addonPackageName(addon.id)),
@@ -38,7 +38,7 @@ function published(name) {
     return true;
   } catch (error) {
     if (String(error.stderr).includes("E404")) return false;
-    throw error;
+    throw new Error(`npm view ${name}@${VERSION} failed:\n${error.stderr}`);
   }
 }
 
@@ -47,8 +47,20 @@ for (const name of names) {
     console.log(`${name}@${VERSION} is already published`);
     continue;
   }
-  execFileSync("npm", ["publish", "--provenance", "--access", "public"], {
-    cwd: join(OUT_DIR, name),
-    stdio: "inherit",
-  });
+  execFileSync(
+    "npm",
+    [
+      "publish",
+      "--access",
+      "public",
+      "--tag",
+      tag,
+      ...(process.env.GITHUB_ACTIONS === "true" ? ["--provenance"] : []),
+      ...(dryRun ? ["--dry-run"] : []),
+    ],
+    { cwd: join(OUT_DIR, name), stdio: "inherit" },
+  );
 }
+console.log(
+  `${dryRun ? "Checked" : "Published"} ${names.length} packages at ${VERSION} (${tag})`,
+);

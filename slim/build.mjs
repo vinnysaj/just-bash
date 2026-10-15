@@ -23,6 +23,7 @@ import {
   addonPackageName,
   BUNDLED_VERSIONS,
   CORE_NAME,
+  distTag,
   OUT_DIR,
   REPO_DIR,
   REPOSITORY_URL,
@@ -40,6 +41,14 @@ const NODE_ENGINES = "^22.13.0 || >=23.2.0";
 const SLIM_DIST = dirname(OUT_DIR);
 const TYPES_DIR = join(SLIM_DIST, "types");
 const UPSTREAM = upstreamBase();
+// Throws unless VERSION is a version this upstream base can publish.
+distTag(VERSION, UPSTREAM.version);
+/**
+ * The libraries the add-ons bundle (sql.js, turndown, run) come from
+ * upstream's install, so they are always the versions upstream's lockfile
+ * resolves for the merged release.
+ */
+const UPSTREAM_MODULES = join(UPSTREAM_DIR, "node_modules");
 
 // Bundled CommonJS dependencies call require() for Node builtins.
 const REQUIRE_BANNER =
@@ -48,6 +57,7 @@ const REQUIRE_BANNER =
 const bundleDefaults = {
   // Metafile paths are relative to this directory.
   absWorkingDir: REPO_DIR,
+  nodePaths: [UPSTREAM_MODULES],
   bundle: true,
   platform: "node",
   format: "esm",
@@ -283,7 +293,7 @@ async function buildPython() {
 
 async function buildSqlite() {
   const dir = packageDir("sqlite");
-  const sqlJsDir = join(SLIM_DIR, "node_modules/sql.js");
+  const sqlJsDir = join(UPSTREAM_MODULES, "sql.js");
   const worker = await esbuild.build({
     ...bundleDefaults,
     entryPoints: [join(UPSTREAM_SRC, "commands/sqlite3/worker.ts")],
