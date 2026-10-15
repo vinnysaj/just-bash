@@ -7,9 +7,12 @@
 //   node test/differential/differential.mjs [--filter <id-substring,...>] [--keep]
 //
 // Upstream runs twice, the second time after the first and the slim run have
-// finished. Cases whose output differs between the two upstream runs depend
-// on time or randomness rather than on the build, so they are listed and left
-// out of the comparison. Every run uses the Node that runs this script, so the
+// finished, and each case that then differs from upstream runs RECHECK_RUNS
+// more times in both builds. Cases whose output varies between runs of the
+// same build depend on time, randomness, or scheduling rather than on the
+// build (`time` prints a measured duration), so they are listed and left out
+// of the comparison; a difference counts only when both builds reproduce
+// their output. Every run uses the Node that runs this script, so the
 // comparison can be repeated on each supported Node version.
 //
 // Upstream's dependencies are semver ranges resolved at install time, while
@@ -40,6 +43,7 @@ const filterIndex = args.indexOf("--filter");
 const filters = filterIndex === -1 ? null : args[filterIndex + 1].split(",");
 const keep = args.includes("--keep");
 const RUNNER = join(import.meta.dirname, "runner.mjs");
+const RECHECK_RUNS = 3;
 
 /** Types slim core exports beyond upstream's, listed in the README. */
 const ADDED_TYPE_EXPORTS = ["PythonConfig"];
@@ -292,9 +296,10 @@ try {
   }
 
   const upstreamEntry = esmEntry(upstreamDir, "just-bash");
+  const slimEntry = esmEntry(slimDir, CORE_NAME);
   const [first, slim] = await Promise.all([
     runCorpus("upstream (1st run)", upstreamEntry, casesFile, work),
-    runCorpus("slim", esmEntry(slimDir, CORE_NAME), casesFile, work),
+    runCorpus("slim", slimEntry, casesFile, work),
   ]);
   const second = await runCorpus(
     "upstream (2nd run)",
@@ -302,19 +307,47 @@ try {
     casesFile,
     work,
   );
+  const upstreamRuns = [first, second];
+  const slimRuns = [slim];
 
-  const unstable = cases.filter(
-    (testCase) => !same(first[testCase.id], second[testCase.id]),
-  );
-  const mismatches = cases.filter(
+  const differing = cases.filter(
     (testCase) =>
-      !unstable.includes(testCase) &&
+      same(first[testCase.id], second[testCase.id]) &&
       !same(first[testCase.id], slim[testCase.id]),
+  );
+  if (differing.length > 0) {
+    const recheckFile = join(work, "recheck.json");
+    writeFileSync(recheckFile, JSON.stringify(differing));
+    for (let run = 1; run <= RECHECK_RUNS; run++) {
+      const [upstreamRun, slimRun] = await Promise.all([
+        runCorpus(
+          `upstream (recheck ${run})`,
+          upstreamEntry,
+          recheckFile,
+          work,
+        ),
+        runCorpus(`slim (recheck ${run})`, slimEntry, recheckFile, work),
+      ]);
+      upstreamRuns.push(upstreamRun);
+      slimRuns.push(slimRun);
+    }
+  }
+
+  /** Whether every run that has the case gave the same result. */
+  const reproducible = (runs, id) =>
+    runs.filter((run) => id in run).every((run) => same(run[id], runs[0][id]));
+  const unstable = cases.filter(
+    (testCase) =>
+      !reproducible(upstreamRuns, testCase.id) ||
+      !reproducible(slimRuns, testCase.id),
+  );
+  const mismatches = differing.filter(
+    (testCase) => !unstable.includes(testCase),
   );
 
   if (unstable.length > 0) {
     console.log(
-      `\n${unstable.length} cases differ between two upstream runs and are not compared:`,
+      `\n${unstable.length} cases vary between runs of the same build and are not compared:`,
     );
     for (const testCase of unstable) console.log(`  ${testCase.id}`);
   }
@@ -324,7 +357,7 @@ try {
     );
   }
   console.log(
-    `\n${cases.length - unstable.length - mismatches.length} identical, ${mismatches.length} different, ${unstable.length} unstable in upstream`,
+    `\n${cases.length - unstable.length - mismatches.length} identical, ${mismatches.length} different, ${unstable.length} vary between runs`,
   );
   if (keep) console.log(`Kept ${work}, ${upstreamDir}, ${slimDir}`);
   else {
