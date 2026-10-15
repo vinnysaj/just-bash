@@ -21,6 +21,7 @@ import {
   ADDON_ALIASES,
   ADDONS,
   addonPackageName,
+  BUNDLED_VERSIONS,
   CORE_NAME,
   OUT_DIR,
   REPO_DIR,
@@ -33,7 +34,7 @@ import {
   upstreamBase,
   VERSION,
 } from "./config.mjs";
-import { collectLicenses } from "./scripts/licenses.mjs";
+import { bundledPackages, licenseText } from "./scripts/licenses.mjs";
 
 const NODE_ENGINES = "^22.13.0 || >=23.2.0";
 const SLIM_DIST = dirname(OUT_DIR);
@@ -56,6 +57,17 @@ const bundleDefaults = {
   metafile: true,
   logLevel: "warning",
 };
+
+/** Package name → versions of the third-party packages bundled into it. */
+const bundledVersions = Object.create(null);
+
+/** Records what a package bundles and returns its THIRD_PARTY_LICENSES. */
+function thirdParty(id, metafile, extraPackageDirs) {
+  const entries = bundledPackages(metafile, extraPackageDirs);
+  bundledVersions[id === "core" ? CORE_NAME : addonPackageName(id)] =
+    Object.fromEntries(entries.map((entry) => [entry.name, entry.version]));
+  return licenseText(entries);
+}
 
 function packageDir(id) {
   return join(OUT_DIR, id === "core" ? CORE_NAME : addonPackageName(id));
@@ -192,7 +204,7 @@ async function buildCore() {
       },
     ),
   );
-  writeLegal("core", collectLicenses(result.metafile));
+  writeLegal("core", thirdParty("core", result.metafile));
 }
 
 /** Fails the build when the slim seam did not replace the upstream one. */
@@ -305,7 +317,7 @@ async function buildSqlite() {
       },
     ),
   );
-  writeLegal("sqlite", collectLicenses(worker.metafile, [sqlJsDir]));
+  writeLegal("sqlite", thirdParty("sqlite", worker.metafile, [sqlJsDir]));
 }
 
 /** Add-ons whose entry is bundled together with the library it wraps. */
@@ -324,7 +336,7 @@ async function buildBundledAddon(id) {
       files: ["index.js", "NOTICE", "THIRD_PARTY_LICENSES"],
     }),
   );
-  writeLegal(id, collectLicenses(result.metafile));
+  writeLegal(id, thirdParty(id, result.metafile));
 }
 
 /** Add-ons published as thin re-exports of regular npm dependencies. */
@@ -394,6 +406,8 @@ buildDependencyAddon("net", { ".": "index.js" });
 buildDependencyAddon("archive", { "./xz": "xz.js", "./zstd": "zstd.js" });
 buildFull();
 rmSync(TYPES_DIR, { recursive: true, force: true });
+// Read by the differential test to install upstream with the same versions.
+writeJson(BUNDLED_VERSIONS, bundledVersions);
 
 for (const name of readdirSync(join(OUT_DIR, "@vinnysaj"))) {
   if (!existsSync(join(OUT_DIR, "@vinnysaj", name, "package.json"))) {

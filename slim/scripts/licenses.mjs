@@ -1,5 +1,5 @@
-// Builds THIRD_PARTY_LICENSES from the npm packages an esbuild bundle took
-// code from.
+// Finds the npm packages an esbuild bundle took code from, and renders
+// THIRD_PARTY_LICENSES for them.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -20,10 +20,12 @@ function packageRoot(file) {
 }
 
 /**
+ * Name, version, license, and license texts of each bundled package, by name.
+ *
  * @param {import("esbuild").Metafile} metafile built with absWorkingDir set to REPO_DIR
  * @param {string[]} extraPackageDirs packages copied into the output rather than bundled
  */
-export function collectLicenses(metafile, extraPackageDirs = []) {
+export function bundledPackages(metafile, extraPackageDirs = []) {
   const roots = new Set(extraPackageDirs);
   for (const input of Object.keys(metafile.inputs)) {
     const root = packageRoot(resolve(REPO_DIR, input));
@@ -65,8 +67,11 @@ export function collectLicenses(metafile, extraPackageDirs = []) {
       texts,
     };
   });
-  entries.sort((a, b) => a.name.localeCompare(b.name));
+  return entries.sort((a, b) => a.name.localeCompare(b.name));
+}
 
+/** THIRD_PARTY_LICENSES text for the entries from bundledPackages(). */
+export function licenseText(entries) {
   const sections = entries.map(
     (entry) =>
       `${entry.name}@${entry.version} (${entry.license})\n\n${entry.texts.join("\n\n")}`,

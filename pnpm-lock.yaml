@@ -286,28 +286,16 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.10)(jsdom@27.3.0)(vite@8.0.10(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   slim:
-    devDependencies:
+    dependencies:
       '@mongodb-js/zstd':
         specifier: ^7.0.0
         version: 7.0.0
-      '@types/node':
-        specifier: ^25.9.5
-        version: 25.9.5
-      esbuild:
-        specifier: ^0.27.7
-        version: 0.27.7
       guarded-fetch:
         specifier: ^0.1.5
         version: 0.1.5
       node-liblzma:
         specifier: ^2.2.0
         version: 2.2.0
-      rollup:
-        specifier: ^4.64.5
-        version: 4.64.5
-      rollup-plugin-dts:
-        specifier: ^6.5.1
-        version: 6.5.1(rollup@4.64.5)(typescript@5.9.3)
       run:
         specifier: 2.1.3
         version: 2.1.3(typescript@5.9.3)
@@ -317,6 +305,19 @@ importers:
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.5
+        version: 25.9.5
+      esbuild:
+        specifier: ^0.27.7
+        version: 0.27.7
+      rollup:
+        specifier: ^4.64.5
+        version: 4.64.5
+      rollup-plugin-dts:
+        specifier: ^6.5.1
+        version: 6.5.1(rollup@4.64.5)(typescript@5.9.3)
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

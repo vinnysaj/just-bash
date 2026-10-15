@@ -14,6 +14,9 @@ export const UPSTREAM_SRC = join(UPSTREAM_DIR, "src");
 /** Build output: one directory per package, laid out the way npm installs them. */
 export const OUT_DIR = join(SLIM_DIR, "dist/node_modules");
 
+/** Written by the build: package name → versions of the packages it bundles. */
+export const BUNDLED_VERSIONS = join(SLIM_DIR, "dist/bundled-versions.json");
+
 export const SCOPE = "@vinnysaj";
 export const CORE_NAME = `${SCOPE}/just-bash`;
 export const REPOSITORY_URL = "git+https://github.com/vinnysaj/just-bash.git";
@@ -25,9 +28,12 @@ const slimManifest = JSON.parse(
 /** Version shared by every published package. */
 export const VERSION = slimManifest.version;
 
-/** Runtime dependency ranges, read from the tools package so there is one source. */
+/**
+ * Range of a library an add-on ships. slim/package.json lists everything the
+ * packages ship as dependencies and the build tooling as devDependencies.
+ */
 function dependencyRange(name) {
-  const range = slimManifest.devDependencies[name];
+  const range = slimManifest.dependencies[name];
   if (!range) throw new Error(`slim/package.json is missing ${name}`);
   return range;
 }
