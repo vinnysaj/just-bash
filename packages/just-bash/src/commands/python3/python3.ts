@@ -196,6 +196,15 @@ export function _resetExecutionQueue(): void {
   executionQueues = new WeakMap();
 }
 
+/**
+ * Node's global MessageChannel, which is node:worker_threads' class; the DOM
+ * lib types the global as the browser's. It is not imported from
+ * node:worker_threads because python3's tests replace that module with a
+ * mock that exports only Worker.
+ */
+const WorkerMessageChannel =
+  globalThis.MessageChannel as typeof import("node:worker_threads").MessageChannel;
+
 const workerPath =
   addonWorkerPath("python3") ??
   fileURLToPath(new URL("./worker.js", import.meta.url));
@@ -301,7 +310,11 @@ function processNextExecution(queueState: QueueState): void {
   try {
     worker = DefenseInDepthBox.runTrusted(
       // @banned-pattern-ignore: constructor is immediately owned by next.controller lifecycle
-      () => new Worker(workerPath, { workerData: next.input }),
+      () =>
+        new Worker(workerPath, {
+          workerData: next.input,
+          transferList: next.input.cpythonPort ? [next.input.cpythonPort] : [],
+        }),
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -502,16 +515,11 @@ async function executePython(
     };
   }
 
-  let wasmModule: WebAssembly.Module | null;
-  try {
-    wasmModule = await cpythonModule();
-  } catch (error) {
-    return {
-      stdout: "",
-      stderr: `python3: Failed to load CPython: ${sanitizeHostErrorMessage(getErrorMessage(error))}\n`,
-      exitCode: 1,
-    };
-  }
+  // CPython compiled once per thread reaches the worker on this channel when
+  // it is ready, so the queue, timeout, and abort cover the compile, as they
+  // cover a worker that compiles python.wasm itself.
+  const cpython = cpythonModule();
+  const cpythonChannel = cpython === null ? null : new WorkerMessageChannel();
 
   const controller = new WorkerRequestController({
     commandName: "python3",
@@ -533,11 +541,11 @@ async function executePython(
     scriptPath,
     timeoutMs,
     maxFileSize: ctx.limits.maxStringLength,
-    ...(wasmModule && { wasmModule }),
+    ...(cpythonChannel && { cpythonPort: cpythonChannel.port2 }),
   };
 
   controller.assertMessageSize(
-    { ...workerInput, sharedBuffer: undefined, wasmModule: undefined },
+    { ...workerInput, sharedBuffer: undefined, cpythonPort: undefined },
     "request",
   );
 
@@ -550,6 +558,7 @@ async function executePython(
         if (settled) return;
         settled = true;
         controller.close();
+        cpythonChannel?.port1.close();
         resolve(result);
       },
       requireDefenseContext: ctx.requireDefenseContext,
@@ -607,6 +616,17 @@ async function executePython(
       queueState.executionQueue.push(queueEntry);
       processNextExecution(queueState);
     }
+
+    cpython?.then(
+      (wasmModule) => cpythonChannel?.port1.postMessage(wasmModule),
+      (error: unknown) => {
+        bridgeHandler.stop?.();
+        queueEntry.cancel({
+          success: false,
+          error: `Failed to load CPython: ${sanitizeHostErrorMessage(getErrorMessage(error))}`,
+        });
+      },
+    );
   });
 
   const [bridgeOutput, workerResult] = await Promise.all([

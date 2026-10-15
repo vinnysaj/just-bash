@@ -12,7 +12,7 @@
 
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import { parentPort, workerData } from "node:worker_threads";
+import { type MessagePort, parentPort, workerData } from "node:worker_threads";
 import { sanitizeHostErrorMessage } from "../../fs/sanitize-error.js";
 import {
   WorkerDefenseInDepth,
@@ -36,8 +36,11 @@ export interface WorkerInput {
   timeoutMs?: number;
   /** Maximum size of one HOSTFS file, enforced before guest allocations. */
   maxFileSize?: number;
-  /** CPython compiled by the parent, so this worker skips compiling python.wasm. */
-  wasmModule?: WebAssembly.Module;
+  /**
+   * Port the parent posts CPython on, compiled, so this worker instantiates
+   * it instead of compiling python.wasm.
+   */
+  cpythonPort?: MessagePort;
 }
 
 export interface WorkerOutput {
@@ -1289,6 +1292,20 @@ function postWorkerMessage(protocolToken: string, message: unknown): void {
   }
 }
 
+/** Waits for the compiled CPython module the parent posts on `port`. */
+function receiveCpythonModule(port: MessagePort): Promise<WebAssembly.Module> {
+  return new Promise((resolve, reject) => {
+    port.once("message", (wasmModule: unknown) => {
+      port.close();
+      if (wasmModule instanceof WebAssembly.Module) resolve(wasmModule);
+      else reject(new Error("the parent sent no WebAssembly.Module"));
+    });
+    port.once("close", () =>
+      reject(new Error("the parent closed the CPython module port")),
+    );
+  });
+}
+
 /**
  * Creates the CPython module from a precompiled WebAssembly module through
  * Emscripten's instantiateWasm hook. The hook has no way to report failure,
@@ -1409,8 +1426,12 @@ async function runPython(input: WorkerInput): Promise<WorkerOutput> {
       print: onPrint,
       printErr: onPrintErr,
     };
-    Module = await (input.wasmModule
-      ? instantiatePythonModule(createPythonModule, input.wasmModule, config)
+    Module = await (input.cpythonPort
+      ? instantiatePythonModule(
+          createPythonModule,
+          await receiveCpythonModule(input.cpythonPort),
+          config,
+        )
       : createPythonModule(config));
   } catch (e) {
     const message = sanitizeHostErrorMessage((e as Error).message);

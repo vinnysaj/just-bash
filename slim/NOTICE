@@ -21,8 +21,8 @@ Changes made to just-bash, as required by section 4(b) of the license:
     python.wasmModule.
   - network/fetch.ts: requires the net add-on when the network option is set.
   - commands/python3/python3.ts: starts the worker shipped by the add-on and
-    passes it CPython compiled once per thread, or the module given as
-    python.wasmModule.
+    posts it CPython compiled once per thread, or the module given as
+    python.wasmModule, on a message port.
   - commands/python3/worker.ts: instantiates CPython from that module.
   - commands/sqlite3/sqlite3.ts: starts the worker shipped by the add-on.
   - commands/tar/archive.ts: names the archive add-on when xz or zstd is

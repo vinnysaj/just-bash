@@ -132,12 +132,12 @@ export function addonWorkerPath(command: AddonWorkerCommand): string | null {
 }
 
 export function sharedCpythonModule(): Promise<WebAssembly.Module> | null {
-  const entry = pathToFileURL(
-    join(requiredAddonDirectory("python", "python3"), "index.js"),
-  ).href;
   // The add-on compiles CPython once per thread. WebAssembly is blocked while
   // a script runs.
   return DefenseInDepthBox.runTrustedAsync(async () => {
+    const entry = pathToFileURL(
+      join(requiredAddonDirectory("python", "python3"), "index.js"),
+    ).href;
     const { loadPythonModule } = (await import(entry)) as PythonAddon;
     return loadPythonModule();
   });
