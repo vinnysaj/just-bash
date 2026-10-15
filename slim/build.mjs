@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import * as esbuild from "esbuild";
 import { rollup } from "rollup";
 import { dts } from "rollup-plugin-dts";
@@ -219,13 +220,27 @@ async function buildPython() {
     outfile: join(dir, "dist/commands/python3/worker.js"),
     external: ["../../../vendor/cpython-emscripten/*"],
   });
+  const upstreamVendor = join(UPSTREAM_DIR, "vendor/cpython-emscripten");
   const vendor = join(dir, "vendor/cpython-emscripten");
   mkdirSync(vendor, { recursive: true });
-  for (const file of ["python.cjs", "python.wasm", "python313.zip"]) {
-    copyFileSync(
-      join(UPSTREAM_DIR, "vendor/cpython-emscripten", file),
-      join(vendor, file),
-    );
+  for (const file of ["python.cjs", "python313.zip"]) {
+    copyFileSync(join(upstreamVendor, file), join(vendor, file));
+  }
+  // Shipped brotli-compressed; index.js decompresses it.
+  const wasm = readFileSync(join(upstreamVendor, "python.wasm"));
+  writeFileSync(
+    join(vendor, "python.wasm.br"),
+    brotliCompressSync(wasm, {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: zlibConstants.BROTLI_MAX_QUALITY,
+        [zlibConstants.BROTLI_PARAM_LGWIN]:
+          zlibConstants.BROTLI_MAX_WINDOW_BITS,
+        [zlibConstants.BROTLI_PARAM_SIZE_HINT]: wasm.length,
+      },
+    }),
+  );
+  for (const file of ["index.js", "index.d.ts"]) {
+    copyFileSync(join(SLIM_DIR, "packages/python", file), join(dir, file));
   }
   writeJson(
     join(dir, "package.json"),
@@ -233,8 +248,18 @@ async function buildPython() {
       "python",
       ADDONS.find((addon) => addon.id === "python").description,
       {
-        exports: { "./package.json": "./package.json" },
-        files: ["dist", "vendor", "NOTICE", "THIRD_PARTY_LICENSES"],
+        exports: {
+          ".": { types: "./index.d.ts", default: "./index.js" },
+          "./package.json": "./package.json",
+        },
+        files: [
+          "index.js",
+          "index.d.ts",
+          "dist",
+          "vendor",
+          "NOTICE",
+          "THIRD_PARTY_LICENSES",
+        ],
       },
     ),
   );

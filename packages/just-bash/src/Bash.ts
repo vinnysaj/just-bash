@@ -99,6 +99,17 @@ export interface BashLogger {
   debug(message: string, data?: Record<string, unknown>): void;
 }
 
+export interface PythonConfig {
+  /**
+   * CPython compiled ahead of time, such as with
+   * `WebAssembly.compile(python.wasm)`. python3 runs in this thread hand it to
+   * their workers instead of compiling CPython themselves. Pass it to hosts
+   * that recreate the threads running `Bash`, so that each one skips the
+   * compile.
+   */
+  wasmModule?: WebAssembly.Module;
+}
+
 export interface JavaScriptConfig {
   /** Bootstrap JavaScript code to run before user scripts */
   bootstrap?: string;
@@ -168,8 +179,9 @@ export interface BashOptions {
    * Enable python3/python commands.
    * Python is disabled by default as it introduces additional security surface
    * (arbitrary code execution via CPython Emscripten).
+   * Can be a boolean or a config object with a precompiled CPython module.
    */
-  python?: boolean;
+  python?: boolean | PythonConfig;
   /**
    * Enable js-exec command for sandboxed JavaScript execution via QuickJS.
    * Disabled by default. Can be a boolean or a config object with bootstrap code.
@@ -511,7 +523,11 @@ export class Bash {
     // Register python commands only when explicitly enabled
     // Python introduces additional security surface (arbitrary code execution)
     if (options.python) {
-      for (const cmd of createPythonCommands()) {
+      const pythonConfig: PythonConfig =
+        typeof options.python === "object"
+          ? options.python
+          : Object.create(null);
+      for (const cmd of createPythonCommands(pythonConfig.wasmModule)) {
         this.registerBundledCommand(cmd);
       }
     }

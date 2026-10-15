@@ -12,6 +12,7 @@ export type {
   BashOptions,
   ExecOptions,
   JavaScriptConfig,
+  PythonConfig,
 } from "./Bash.js";
 export { Bash } from "./Bash.js";
 export type {

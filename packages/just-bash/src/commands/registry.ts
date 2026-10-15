@@ -9,6 +9,7 @@ import type {
   RuntimeCommand,
   RuntimeCommandContext,
 } from "../types.js";
+import { provideCpythonModule } from "./python3/cpython-module.js";
 
 type CommandLoader = () => Promise<RuntimeCommand>;
 
@@ -655,8 +656,13 @@ export function getPythonCommandNames(): string[] {
  * These are only registered when python is explicitly enabled.
  * Note: Python introduces additional security surface (arbitrary code execution).
  */
-export function createPythonCommands(): RuntimeCommand[] {
+export function createPythonCommands(
+  wasmModule?: WebAssembly.Module,
+): RuntimeCommand[] {
   requireAddon("python");
+  if (wasmModule !== undefined) {
+    provideCpythonModule(wasmModule);
+  }
   return pythonCommandLoaders.map(createLazyCommand);
 }
 

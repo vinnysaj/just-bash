@@ -11,16 +11,16 @@ Installed size matters in serverless runtimes. Convex counts external packages' 
 | Install | Size | vs just-bash@3.6.0 |
 | --- | ---: | ---: |
 | just-bash@3.6.0 (upstream) | 93.37 MiB | 100% |
-| core | 2.00 MiB | 2.1% |
-| core + python | 12.00 MiB | 12.8% |
-| core + js | 2.98 MiB | 3.2% |
-| core + sqlite | 2.72 MiB | 2.9% |
-| core + net | 3.85 MiB | 4.1% |
-| core + html | 2.27 MiB | 2.4% |
-| core + archive | 3.51 MiB | 3.8% |
-| core + python + js | 12.97 MiB | 13.9% |
-| core + python + js + sqlite | 13.69 MiB | 14.7% |
-| full | 17.32 MiB | 18.5% |
+| core | 2.01 MiB | 2.2% |
+| core + python | 7.92 MiB | 8.5% |
+| core + js | 2.99 MiB | 3.2% |
+| core + sqlite | 2.73 MiB | 2.9% |
+| core + net | 3.86 MiB | 4.1% |
+| core + html | 2.28 MiB | 2.4% |
+| core + archive | 3.52 MiB | 3.8% |
+| core + python + js | 8.89 MiB | 9.5% |
+| core + python + js + sqlite | 9.61 MiB | 10.3% |
+| full | 13.24 MiB | 14.2% |
 
 Measured with `npm install --os=linux --cpu=arm64 --libc=glibc --ignore-scripts` into an empty directory, summing every file under node_modules and following symlinks, the way Convex counts them. Install scripts add the native zstd and xz builds to the archive add-on and to upstream. [`slim/scripts/size-report.mjs`](https://github.com/vinnysaj/just-bash/blob/slim/slim/scripts/size-report.mjs) produces this table.
 
@@ -29,7 +29,7 @@ Measured with `npm install --os=linux --cpu=arm64 --libc=glibc --ignore-scripts`
 | Package | Adds | Size |
 | --- | --- | ---: |
 | `@vinnysaj/just-bash` | The shell, its builtins, and every pure-JavaScript command: text tools (grep, sed, awk, sort, cut, ...), jq, yq, xan, diff, file, gzip, bzip2, tar, curl (with the `fetch` option), and more. No dependencies. | 2.0 MiB |
-| `@vinnysaj/just-bash-python` | `python3` and `python` (the `python` option): CPython 3.13 compiled to WebAssembly, with its standard library | 10.0 MiB |
+| `@vinnysaj/just-bash-python` | `python3` and `python` (the `python` option): CPython 3.13 compiled to WebAssembly, with its standard library | 5.9 MiB |
 | `@vinnysaj/just-bash-js` | `js-exec` and `node` (the `javascript` option): a QuickJS sandbox for JavaScript and TypeScript | 1.0 MiB |
 | `@vinnysaj/just-bash-sqlite` | `sqlite3`: SQLite compiled to WebAssembly | 0.7 MiB |
 | `@vinnysaj/just-bash-net` | The transport behind the `network` option ([guarded-fetch](https://www.npmjs.com/package/guarded-fetch)) | 1.9 MiB |
@@ -67,7 +67,34 @@ The API is upstream's: every export, option, type, and behavior has the same nam
 - **Node.js 22.13 or later** (`^22.13.0 || >=23.2.0`; upstream supports 20.19). Node 20 reached end of life in April 2026. These are the first versions with `module.stripTypeScriptTypes`, which js-exec uses to strip TypeScript, so the `typescript` package, which upstream lists as a dependency and only loads on older Node, is gone.
 - **Node.js only.** The browser build (`just-bash/browser`) and the `just-bash` and `just-bash-shell` CLIs are not published. Use upstream just-bash for those.
 - **guarded-fetch 0.1.5** (upstream pins 0.1.3), which brings undici 7.30.0. undici 7.29.0, which 0.1.3 pins, is affected by advisories fixed in 7.29.1. 0.1.5 also narrows guarded-fetch's own host matching to exact names, which just-bash cannot observe: its allow-list already requires an exact origin.
-- **Python startup.** CPython is compiled once per process and the compiled module is shared with each python3 worker, so every python3 run after the first in a process starts about twice as fast. The compiled module stays in memory for the life of the process. The standard library is unchanged: upstream's archive already leaves out the test suites, tkinter, idlelib, ensurepip, venv, and lib2to3.
+- **Dependency versions are fixed per release.** Upstream lists its dependencies as semver ranges, so a fresh install of just-bash picks up their newest releases. Here they are bundled at the versions in upstream's lockfile for the release a version is based on, the versions upstream's CI tested. For example, just-bash@3.6.0 installed today gets sql.js 1.15.0 (SQLite 3.54.0), while 1.0.0 bundles sql.js 1.14.1 (SQLite 3.49.1), so `sqlite3 --version` differs. A weekly audit of the shipped dependencies flags security advisories between releases.
+- **Python startup.** CPython ships brotli-compressed. The first python3 run in a thread decompresses and compiles it, which takes about 20 ms longer than upstream's first run, and every later run in that thread reuses the compiled module, so it starts about twice as fast. The compiled module stays in memory for the life of the thread. Nothing needs configuring; hosts that start a new thread for each task can compile CPython once instead, as [Python](#python) describes. The standard library is unchanged: upstream's archive already leaves out the test suites, tkinter, idlelib, ensurepip, venv, and lib2to3.
+- **Additions.** The `python` option also accepts `{ wasmModule }` (type `PythonConfig`), and the python add-on exports `loadPythonModule()`; see [Python](#python). Upstream has neither.
+
+## Python
+
+With `python: true`, each thread that runs `Bash` compiles CPython on its first python3 run and reuses it after that, so a host that keeps its threads needs nothing more. A host that starts a new worker thread for each task pays the compile in every one of them. It can compile once on the main thread with `loadPythonModule()` and pass the module to each worker, which hands it to `Bash` as `python: { wasmModule }`:
+
+```ts
+// Main thread, once per process
+import { Worker } from "node:worker_threads";
+import { loadPythonModule } from "@vinnysaj/just-bash-python";
+
+const wasmModule = await loadPythonModule();
+const worker = new Worker(new URL("./task.js", import.meta.url), {
+  workerData: { wasmModule },
+});
+```
+
+```ts
+// task.js, in each worker
+import { workerData } from "node:worker_threads";
+import { Bash } from "@vinnysaj/just-bash";
+
+const bash = new Bash({ python: { wasmModule: workerData.wasmModule } });
+```
+
+`loadPythonModule()` decompresses and compiles CPython once per thread and returns the same promise to every later call. A `WebAssembly.Module` passes to other threads of the same process through `workerData` or `postMessage`, including `eval: true` workers, without being copied or compiled again. `python: { wasmModule }` enables python3 like `python: true`, and from then on every python3 run in that thread uses the given module. A value that is not a `WebAssembly.Module` throws a `TypeError` while constructing `Bash`.
 
 ## Convex
 

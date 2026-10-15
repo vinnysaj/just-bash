@@ -9,9 +9,9 @@
  */
 
 import { readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   AddonFeature,
   AddonWorkerCommand,
@@ -45,8 +45,12 @@ const WORKERS: ReadonlyMap<AddonWorkerCommand, [Addon, string]> = new Map([
   ["sqlite3", ["sqlite", "worker.js"]],
 ]);
 
+/** Entry of the python add-on, slim/packages/python/index.js. */
+interface PythonAddon {
+  loadPythonModule(): Promise<WebAssembly.Module>;
+}
+
 const addonDirectories = new Map<Addon, string | null>();
-let cpythonModule: Promise<WebAssembly.Module> | undefined;
 
 function packageName(addon: Addon): string {
   return `@vinnysaj/just-bash-${addon}`;
@@ -128,23 +132,15 @@ export function addonWorkerPath(command: AddonWorkerCommand): string | null {
 }
 
 export function sharedCpythonModule(): Promise<WebAssembly.Module> | null {
-  if (cpythonModule === undefined) {
-    const directory = requiredAddonDirectory("python", "python3");
-    // WebAssembly is blocked while a script runs.
-    const loading = DefenseInDepthBox.runTrustedAsync(async () =>
-      WebAssembly.compile(
-        await readFile(
-          join(directory, "vendor/cpython-emscripten/python.wasm"),
-        ),
-      ),
-    );
-    // A failed load is retried by the next python3 run.
-    loading.catch(() => {
-      if (cpythonModule === loading) cpythonModule = undefined;
-    });
-    cpythonModule = loading;
-  }
-  return cpythonModule;
+  const entry = pathToFileURL(
+    join(requiredAddonDirectory("python", "python3"), "index.js"),
+  ).href;
+  // The add-on compiles CPython once per thread. WebAssembly is blocked while
+  // a script runs.
+  return DefenseInDepthBox.runTrustedAsync(async () => {
+    const { loadPythonModule } = (await import(entry)) as PythonAddon;
+    return loadPythonModule();
+  });
 }
 
 export function codecUnavailableMessage(codec: NativeCodec): string {

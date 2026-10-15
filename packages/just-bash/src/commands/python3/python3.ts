@@ -12,7 +12,7 @@
 
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { addonWorkerPath, sharedCpythonModule } from "../../addons.js";
+import { addonWorkerPath } from "../../addons.js";
 import { decodeBytesToUtf8, latin1FromBytes } from "../../encoding.js";
 import type { IFileSystem } from "../../fs/interface.js";
 import {
@@ -33,6 +33,7 @@ import { hasHelpFlag, showHelp } from "../help.js";
 import { BridgeHandler } from "../worker-bridge/bridge-handler.js";
 import { createSharedBuffer } from "../worker-bridge/protocol.js";
 import { WorkerRequestController } from "../worker-request-controller.js";
+import { cpythonModule } from "./cpython-module.js";
 import type { WorkerInput, WorkerOutput } from "./worker.js";
 
 const python3Help = {
@@ -503,7 +504,7 @@ async function executePython(
 
   let wasmModule: WebAssembly.Module | null;
   try {
-    wasmModule = await sharedCpythonModule();
+    wasmModule = await cpythonModule();
   } catch (error) {
     return {
       stdout: "",
