@@ -11,8 +11,9 @@ name: Slim release
 #
 # Anything that needs a person (a merge conflict, a failing test, a package
 # that grew, a failed publish) fails the run and opens or comments on the
-# issue labeled ISSUE_LABEL; GitHub emails both. Scheduled runs wait while
-# that issue is open, and the next successful release closes it.
+# issue labeled ISSUE_LABEL, mentioning the repository owner so that GitHub
+# notifies them whatever they watch. Scheduled runs wait while that issue is
+# open, and the next successful release closes it.
 #
 # npm authenticates each publish through trusted publishing (OIDC), bound to
 # this file's name, and adds provenance. A package's first version cannot use
@@ -297,7 +298,9 @@ jobs:
           fi
           body="${what}
 
-          Run: ${run}"
+          Run: ${run}
+
+          cc @${GITHUB_REPOSITORY_OWNER}"
           gh label create "$ISSUE_LABEL" --repo "$GITHUB_REPOSITORY" --color B60205 \
             --description "Slim release needs a person" --force
           existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues?labels=${ISSUE_LABEL}&state=open" --jq '.[0].number // empty')
