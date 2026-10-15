@@ -213,7 +213,7 @@ jobs:
           # Only the bootstrap uses a token; every other publish uses OIDC.
           NODE_AUTH_TOKEN: ${{ needs.plan.outputs.action == 'bootstrap' && secrets.NPM_TOKEN || '' }}
         run: |
-          if [ "$ACTION" = bootstrap ] && [ -z "$NODE_AUTH_TOKEN" ]; then
+          if [ "$ACTION" = bootstrap ] && [ "$DRY_RUN" != true ] && [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "::error::The bootstrap needs the NPM_TOKEN secret; see the top of slim-release.yml"
             exit 1
           fi
